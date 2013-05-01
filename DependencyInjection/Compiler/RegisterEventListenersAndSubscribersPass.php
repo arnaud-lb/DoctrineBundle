@@ -18,12 +18,21 @@ use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 
+/**
+ * Registers event listeners and subscribers to the available doctrine connections.
+ *
+ * @author Jeremy Mikola <jmikola@gmail.com>
+ * @author Alexander <iam.asm89@gmail.com>
+ */
 class RegisterEventListenersAndSubscribersPass implements CompilerPassInterface
 {
     private $container;
     private $connections;
     private $eventManagers;
 
+    /**
+     * {@inheritDoc}
+     */
     public function process(ContainerBuilder $container)
     {
         if (!$container->hasDefinition('doctrine')) {
@@ -66,35 +75,34 @@ class RegisterEventListenersAndSubscribersPass implements CompilerPassInterface
     private function groupByConnection(array $services, $isListener = false)
     {
         $grouped = array();
-        foreach (array_keys($this->connections) as $con) {
+        foreach ($allCons = array_keys($this->connections) as $con) {
             $grouped[$con] = array();
         }
 
         foreach ($services as $id => $instances) {
             foreach ($instances as $instance) {
-                $cons = isset($instance['connection']) ? array($instance['connection']) : array_keys($this->connections);
+                if ($isListener) {
+                    if (!isset($instance['event'])) {
+                        throw new \InvalidArgumentException(sprintf('Doctrine event listener "%s" must specify the "event" attribute.', $id));
+                    }
+                    $instance['event'] = array($instance['event']);
+
+                    if (isset($instance['lazy']) && $instance['lazy']) {
+                        $this->container->getDefinition($id)->setPublic(true);
+                    }
+                }
+                $cons = isset($instance['connection']) ? array($instance['connection']) : $allCons;
+
                 foreach ($cons as $con) {
                     if (!isset($grouped[$con])) {
                         throw new \RuntimeException(sprintf('The doctrine connection "%s" referenced in service "%s" does not exist. Available connections names: %s', $con, $id, implode(', ', array_keys($this->connections))));
                     }
 
-                    if ($isListener) {
-                        if (!isset($instance['event'])) {
-                            throw new \InvalidArgumentException(sprintf('Doctrine event listener "%s" must specify the "event" attribute.', $id));
-                        }
-                        $instance['event'] = array($instance['event']);
-
-                        if (isset($instance['lazy']) && $instance['lazy']) {
-                            $this->container->getDefinition($id)->setPublic(true);
-                        }
-
-                        if (isset($grouped[$con][$id])) {
-                            $grouped[$con][$id]['event'] = array_merge($grouped[$con][$id]['event'], $instance['event']);
-                            continue;
-                        }
+                    if ($isListener && isset($grouped[$con][$id])) {
+                        $grouped[$con][$id]['event'] = array_merge($grouped[$con][$id]['event'], $instance['event']);
+                    } else {
+                        $grouped[$con][$id] = $instance;
                     }
-
-                    $grouped[$con][$id] = $instance;
                 }
             }
         }
